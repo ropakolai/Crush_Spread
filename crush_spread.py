@@ -450,44 +450,39 @@ st.markdown('<p class="section-title">Stock-to-Use ratio — USDA</p>', unsafe_a
 @st.cache_data(ttl=3600*6)
 def fetch_stu():
     """
-    USDA FAS OpenData API — soja mondial (commodity 2222000, country all).
+    USDA FAS OpenData API — soja mondial.
+    URL : /OpenData/api/psd/commodity/2222000/country/all/year/{year}
+    attributeId : 20=Production, 176=Total Use, 45=Ending Stocks
     """
-    import requests
     rows = []
-    for year in range(2010, datetime.now().year + 2):
+    current_year = datetime.now().year
+    for year in range(2005, current_year + 2):
         url = f"https://apps.fas.usda.gov/OpenData/api/psd/commodity/2222000/country/all/year/{year}"
         try:
-            r = requests.get(url, timeout=15, headers={"Accept": "application/json"})
+            r = requests.get(url, timeout=10, headers={"Accept": "application/json"})
             if r.status_code != 200:
                 continue
-            data = r.json()
-            for item in data:
-                rows.append({
-                    "year":        item.get("marketYear"),
-                    "attributeId": item.get("attributeId"),
-                    "value":       item.get("value"),
-                    "countryCode": item.get("countryCode"),
-                })
+            for item in r.json():
+                attr = item.get("attributeId")
+                if attr in [20, 176, 45]:
+                    rows.append({
+                        "year":        item.get("marketYear"),
+                        "attributeId": attr,
+                        "value":       item.get("value") or 0,
+                    })
         except Exception:
             continue
 
     if not rows:
         return pd.DataFrame()
 
-    df_raw = pd.DataFrame(rows)
-    # Garder seulement les données mondiales (countryCode = "00" ou agréger)
-    # attributeId : 20=Production, 125=Total Dom. Consumption, 176=Total Use, 45=Ending Stocks
-    df_world = df_raw[df_raw["attributeId"].isin([20, 176, 45])].copy()
-    df_world = df_world.dropna(subset=["year", "value"])
-    df_world["year"] = df_world["year"].astype(int)
-
-    # Agréger par année + attribut (somme monde entier)
-    df_pivot = df_world.groupby(["year", "attributeId"])["value"].sum().unstack("attributeId")
+    df_raw = pd.DataFrame(rows).dropna(subset=["year", "value"])
+    df_raw["year"] = df_raw["year"].astype(int)
+    df_pivot = df_raw.groupby(["year", "attributeId"])["value"].sum().unstack("attributeId")
     df_pivot = df_pivot.rename(columns={20: "production", 176: "total_use", 45: "ending_stocks"})
     df_pivot = df_pivot.dropna()
     df_pivot["stu_pct"] = (df_pivot["ending_stocks"] / df_pivot["total_use"]) * 100
-    df_pivot = df_pivot.sort_index()
-    return df_pivot
+    return df_pivot.sort_index()
 
 try:
     df_stu = fetch_stu()
@@ -618,34 +613,37 @@ st.markdown('<p class="section-title">Export Sales US — USDA</p>', unsafe_allo
 @st.cache_data(ttl=3600*6)
 def fetch_export_sales():
     """
-    USDA FAS OpenData API — Export Sales hebdomadaires soja US
-    commodity 2222000, unité 1000 MT
+    USDA FAS OpenData API — Export Sales hebdomadaires soja US.
+    URL correcte : /OpenData/api/esr/exports/commodityCode/{code}/allCountries/marketYear/{year}
+    Commodity 801 = Soybeans dans l'ESR (différent du PSD)
     """
-    import requests
-    from datetime import date, timedelta
-    end   = date.today()
-    start = end - timedelta(days=365)
-    url = (
-        f"https://apps.fas.usda.gov/OpenData/api/esr/exports"
-        f"?commodityCode=2222000"
-        f"&countryCode=0000"
-        f"&startDate={start}&endDate={end}"
-    )
-    r = requests.get(url, timeout=15, headers={"Accept": "application/json"})
-    r.raise_for_status()
-    data = r.json()
-
+    from datetime import date
     rows = []
-    for item in data:
-        rows.append({
-            "week":         item.get("weeklyExportSalesDate") or item.get("reportDate") or item.get("weekEndingDate"),
-            "net_sales_mt": item.get("netSalesMT") or item.get("netSales1516") or item.get("currentMYNetSales"),
-            "exports_mt":   item.get("exportsMT") or item.get("exports1516") or item.get("currentMYExports"),
-        })
+    current_year = date.today().year
+    # ESR utilise son propre système de codes : 801 = Soybeans
+    for year in [current_year - 1, current_year]:
+        url = f"https://apps.fas.usda.gov/OpenData/api/esr/exports/commodityCode/801/allCountries/marketYear/{year}"
+        try:
+            r = requests.get(url, timeout=10, headers={"Accept": "application/json"})
+            if r.status_code != 200:
+                continue
+            for item in r.json():
+                rows.append({
+                    "week":         item.get("weeklyExportSalesDate") or item.get("reportDate"),
+                    "net_sales_mt": item.get("netSales") or item.get("currentMYNetSales") or 0,
+                    "exports_mt":   item.get("exports") or item.get("currentMYExports") or 0,
+                })
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
     df = pd.DataFrame(rows).dropna(subset=["week"])
     df["week"] = pd.to_datetime(df["week"])
-    df = df.sort_values("week").tail(52)
-    return df
+    # Agréger par semaine (toutes destinations)
+    df = df.groupby("week")[["net_sales_mt", "exports_mt"]].sum().reset_index()
+    return df.sort_values("week").tail(52)
 
 try:
     df_exp = fetch_export_sales()
