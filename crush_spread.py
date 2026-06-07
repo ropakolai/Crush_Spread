@@ -558,22 +558,19 @@ except Exception as e:
 st.markdown("---")
 st.markdown('<p class="section-title">Basis (saisie manuelle)</p>', unsafe_allow_html=True)
 
-spot_price_t = st.sidebar.number_input(
-    "Prix spot local (USD/tonne)",
-    min_value=0.0, max_value=1000.0,
-    value=0.0, step=0.10,
-    format="%.2f",
-    help="Entrez votre prix spot en USD/tonne métrique (ex: 431.90). Conversion en $/bss automatique."
+spot_price_bss_input = st.sidebar.number_input(
+    "Prix spot local ($/boisseau)",
+    min_value=0.0, max_value=50.0,
+    value=0.0, step=0.01,
+    format="%.4f",
+    help="Entrez votre prix spot en $/boisseau"
 )
 
-TONNES_PER_BUSHEL = 1 / 36.744  # 1 boisseau soja = 1/36.744 tonne
-
-if spot_price_t > 0 and zs is not None:
-    spot_price_bss = spot_price_t / 36.744   # conversion USD/t → $/bss
-    futures_bss    = zs / 100                 # ¢/bss → $/bss
-    basis          = spot_price_bss - futures_bss
-    basis_color    = "#3fb950" if basis >= 0 else "#f85149"
-    basis_label    = "prime" if basis >= 0 else "décote"
+if spot_price_bss_input > 0 and zs is not None:
+    futures_bss = zs / 100
+    basis       = spot_price_bss_input - futures_bss
+    basis_color = "#3fb950" if basis >= 0 else "#f85149"
+    basis_label = "prime" if basis >= 0 else "décote"
     b_col1, b_col2, b_col3 = st.columns([1, 2, 1])
     with b_col2:
         st.markdown(f"""
@@ -581,15 +578,23 @@ if spot_price_t > 0 and zs is not None:
             <div class="metric-label">Basis — {basis_label} sur le CBOT</div>
             <div class="metric-value" style="color:{basis_color}">${basis:+.4f}/bss</div>
             <div class="metric-unit">
-                Spot {spot_price_t:.2f} USD/t = {spot_price_bss:.4f} $/bss<br>
-                Futures ZS = {futures_bss:.4f} $/bss<br>
-                Conversion : 1 t = 36.744 boisseaux
+                Spot = {spot_price_bss_input:.4f} $/bss<br>
+                Futures ZS = {futures_bss:.4f} $/bss
             </div>
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("💡 Entrez votre prix spot en USD/tonne dans la sidebar pour calculer le basis.")
+    st.info("💡 Entrez votre prix spot en $/boisseau dans la sidebar pour calculer le basis.")
 
+st.markdown("""
+<div class="info-box" style="margin-top:12px">
+    📈 Prix spot soja en temps réel :<br><br>
+    <a href="https://tradingeconomics.com/commodity/soybeans" target="_blank"
+       style="color:#f5c518; font-family:'Space Mono',monospace; font-size:0.78rem;">
+       → tradingeconomics.com/commodity/soybeans ↗
+    </a>
+</div>
+""", unsafe_allow_html=True)
 
 
 # ── Prix Spot ─────────────────────────────────────────────────────────────────
