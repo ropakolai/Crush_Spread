@@ -220,7 +220,7 @@ CONTRACTS = {
 def fetch_prices(period: str = "6mo"):
     """Fetch current prices and historical data, ticker by ticker for robustness.
     Inclut BRL=X et BDI pour éviter le rate limiting sur des appels séparés."""
-    tickers = list(CONTRACTS.keys()) + ["BRL=X", "BDI"]
+    tickers = list(CONTRACTS.keys()) + ["BRL=X"]
     current = {}
     prev    = {}
     hist_frames = {}
@@ -503,8 +503,8 @@ try:
     df_zs_hist["ZS_d"] = df_zs_hist["ZS"] * 0.01
 
     df_fx = pd.DataFrame(df_brl)
-    df_fx.index = df_fx.index.tz_localize(None) if df_fx.index.tz else df_fx.index
-    df_zs_hist.index = df_zs_hist.index.tz_localize(None) if df_zs_hist.index.tz else df_zs_hist.index
+    df_fx.index = pd.to_datetime(df_fx.index).tz_localize(None) if pd.to_datetime(df_fx.index).tzinfo else pd.to_datetime(df_fx.index)
+    df_zs_hist.index = pd.to_datetime(df_zs_hist.index).tz_localize(None) if pd.to_datetime(df_zs_hist.index).tzinfo else pd.to_datetime(df_zs_hist.index)
     df_merged = df_fx.join(df_zs_hist["ZS_d"], how="inner")
 
     fig_brl = make_subplots(specs=[[{"secondary_y": True}]])
@@ -607,111 +607,202 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Baltic Dry Index ──────────────────────────────────────────────────────────
+# ── Fret Maritime — Baltic Indices ────────────────────────────────────────────
 st.markdown("---")
-st.markdown('<p class="section-title">Baltic Dry Index — Coût du fret maritime</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-title">Fret Maritime — Baltic Indices</p>', unsafe_allow_html=True)
 
-try:
-    # BDI déjà dans hist (chargé dans fetch_prices)
-    df_bdi = hist[["BDI"]].dropna()["BDI"] if "BDI" in hist.columns else pd.Series(dtype=float)
-    if df_bdi.empty:
-        raise ValueError("BDI non disponible")
+st.markdown("""
+<div class="info-box" style="margin-bottom:16px">
+    Les données Baltic Exchange ne sont pas disponibles gratuitement via API.
+    Voici les liens directs vers les indices clés — le <strong style="color:#e6edf3">Panamax</strong> est le plus pertinent pour le soja (routes grain/oilseed).
+</div>
+""", unsafe_allow_html=True)
 
-    df_zs_bdi = hist[["ZS"]].copy().dropna()
-    df_zs_bdi["ZS_d"] = df_zs_bdi["ZS"] * 0.01
-    df_zs_bdi.index = df_zs_bdi.index.tz_localize(None) if df_zs_bdi.index.tz else df_zs_bdi.index
-    df_bdi.index    = df_bdi.index.tz_localize(None) if df_bdi.index.tz else df_bdi.index
+baltic_links = [
+    {
+        "name": "Baltic Dry Index (BDI)",
+        "desc": "Indice global — composite Capesize (40%) + Panamax (30%) + Supramax (30%)",
+        "url": "https://www.investing.com/indices/baltic-dry",
+        "highlight": False,
+    },
+    {
+        "name": "Baltic Panamax Index (BPI) ⭐",
+        "desc": "Le plus pertinent pour le soja — navires 60-70k tonnes, routes grain/oilseed",
+        "url": "https://www.investing.com/indices/baltic-panamax",
+        "highlight": True,
+    },
+    {
+        "name": "Baltic Capesize Index (BCI)",
+        "desc": "Gros navires 150k tonnes — minerai de fer et charbon principalement",
+        "url": "https://www.investing.com/indices/baltic-capesize",
+        "highlight": False,
+    },
+    {
+        "name": "Baltic Supramax Index (BSI)",
+        "desc": "Navires 48-60k tonnes — vrac divers, routes courtes",
+        "url": "https://www.investing.com/indices/baltic-supramax",
+        "highlight": False,
+    },
+]
 
-    if df_bdi.empty:
-        st.warning("BDI indisponible via yfinance.")
+cols_b = st.columns(4)
+for col, src in zip(cols_b, baltic_links):
+    border = "#f5c518" if src["highlight"] else "#30363d"
+    with col:
+        st.markdown(f"""
+        <div class="metric-card" style="text-align:left; border-color:{border};">
+            <div style="font-family:'Syne',sans-serif; font-weight:700; font-size:0.85rem;
+                        color:#e6edf3; margin-bottom:8px;">{src["name"]}</div>
+            <div style="font-family:'Space Mono',monospace; font-size:0.68rem;
+                        color:#7d8590; margin-bottom:12px; line-height:1.5;">{src["desc"]}</div>
+            <a href="{src["url"]}" target="_blank"
+               style="font-family:'Space Mono',monospace; font-size:0.72rem; color:#f5c518;">
+               → Accéder ↗
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+
+
+# ── Calculateur d'Arbitrage ───────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Calculateur d\'Arbitrage Géographique</p>', unsafe_allow_html=True)
+
+st.markdown("""
+<div class="info-box" style="margin-bottom:16px">
+    Entrez les prix spot de chaque origine/destination (en <strong style="color:#e6edf3">USD/tonne</strong>)
+    et les coûts de fret entre chaque paire de points.
+    L'app calcule automatiquement quels arbitrages sont rentables.
+    <br><br>
+    <span style="color:#484f58">Arb rentable si : Spot destination − Spot origine − Fret − Frais &gt; 0</span>
+</div>
+""", unsafe_allow_html=True)
+
+ARB_PLACES = {
+    "🇧🇷 Paranaguá (Brésil)":   "BR",
+    "🇺🇸 Gulf (États-Unis)":     "US",
+    "🇳🇱 Rotterdam (Pays-Bas)":  "NL",
+    "🇦🇷 Rosario (Argentine)":   "AR",
+}
+
+ARB_ROUTES = [
+    ("BR", "NL", "🇧🇷 → 🇳🇱"),
+    ("US", "NL", "🇺🇸 → 🇳🇱"),
+    ("AR", "NL", "🇦🇷 → 🇳🇱"),
+    ("BR", "US", "🇧🇷 → 🇺🇸"),
+    ("AR", "US", "🇦🇷 → 🇺🇸"),
+    ("AR", "BR", "🇦🇷 → 🇧🇷"),
+]
+
+# ── Saisie des prix spot ──────────────────────────────────────────────────────
+st.markdown("**1. Prix spot par origine/destination (USD/tonne)**")
+arb_cols = st.columns(4)
+spot_inputs = {}
+for col, (label, code) in zip(arb_cols, ARB_PLACES.items()):
+    with col:
+        spot_inputs[code] = st.number_input(
+            label,
+            min_value=0.0, max_value=2000.0,
+            value=0.0, step=0.5, format="%.2f",
+            key=f"spot_{code}"
+        )
+
+# ── Saisie des frais portuaires fixes ────────────────────────────────────────
+st.markdown("**2. Frais portuaires fixes par tonne (USD/tonne)**")
+port_col1, port_col2, _ = st.columns([1, 1, 2])
+with port_col1:
+    frais_origine = st.number_input("Frais port origine", min_value=0.0, max_value=50.0,
+                                     value=3.0, step=0.5, format="%.2f",
+                                     help="Manutention, inspection, chargement à l'origine")
+with port_col2:
+    frais_destination = st.number_input("Frais port destination", min_value=0.0, max_value=50.0,
+                                         value=4.0, step=0.5, format="%.2f",
+                                         help="Manutention, déchargement à destination")
+
+frais_total = frais_origine + frais_destination
+
+# ── Saisie des coûts de fret par route ───────────────────────────────────────
+st.markdown("**3. Coût de fret Panamax par route (USD/tonne)**")
+fret_cols = st.columns(3)
+fret_inputs = {}
+route_labels = {
+    ("BR","NL"): ("🇧🇷→🇳🇱", 50.0),
+    ("US","NL"): ("🇺🇸→🇳🇱", 38.0),
+    ("AR","NL"): ("🇦🇷→🇳🇱", 52.0),
+    ("BR","US"): ("🇧🇷→🇺🇸", 28.0),
+    ("AR","US"): ("🇦🇷→🇺🇸", 30.0),
+    ("AR","BR"): ("🇦🇷→🇧🇷", 18.0),
+}
+for i, ((orig, dest), (label, default)) in enumerate(route_labels.items()):
+    with fret_cols[i % 3]:
+        fret_inputs[(orig, dest)] = st.number_input(
+            f"Fret {label}",
+            min_value=0.0, max_value=200.0,
+            value=default, step=0.5, format="%.2f",
+            key=f"fret_{orig}_{dest}"
+        )
+
+# ── Calcul et affichage ───────────────────────────────────────────────────────
+spots_renseignes = {k: v for k, v in spot_inputs.items() if v > 0}
+
+if len(spots_renseignes) >= 2:
+    st.markdown("---")
+    st.markdown("**Résultats des arbitrages**")
+
+    results = []
+    for orig, dest, route_label in ARB_ROUTES:
+        if orig not in spots_renseignes or dest not in spots_renseignes:
+            continue
+        spot_o = spot_inputs[orig]
+        spot_d = spot_inputs[dest]
+        fret   = fret_inputs.get((orig, dest), fret_inputs.get((dest, orig), 0))
+        marge  = spot_d - spot_o - fret - frais_total
+        results.append({
+            "route":   route_label,
+            "orig":    spot_o,
+            "dest":    spot_d,
+            "fret":    fret,
+            "frais":   frais_total,
+            "marge":   marge,
+        })
+
+    if not results:
+        st.info("Entrez au moins deux prix spot sur des places différentes.")
     else:
+        # Trier par marge décroissante
+        results.sort(key=lambda x: x["marge"], reverse=True)
 
-        bdi_last  = float(df_bdi.iloc[-1])
-        bdi_prev  = float(df_bdi.iloc[-2]) if len(df_bdi) > 1 else bdi_last
-        bdi_delta = bdi_last - bdi_prev
-        bdi_pct   = bdi_delta / bdi_prev * 100
+        for r in results:
+            color  = "#3fb950" if r["marge"] > 0 else "#f85149"
+            status = "✅ ARB RENTABLE" if r["marge"] > 0 else "❌ Non rentable"
+            icon   = "🟢" if r["marge"] > 0 else "🔴"
 
-        # Niveau BDI : bas < 1000, normal 1000-2000, élevé > 2000
-        bdi_color = "#f85149" if bdi_last > 2000 else "#f5c518" if bdi_last > 1000 else "#3fb950"
-        bdi_label = "🔴 FRET CHER" if bdi_last > 2000 else "🟡 MODÉRÉ" if bdi_last > 1000 else "🟢 FRET BON MARCHÉ"
-        sign      = "+" if bdi_delta >= 0 else ""
-        delta_cls = "delta-pos" if bdi_delta >= 0 else "delta-neg"
-        arrow     = "▲" if bdi_delta >= 0 else "▼"
-
-        # Ligne actuelle de BDI
-        bdi_col1, bdi_col2 = st.columns([2, 1])
-
-        with bdi_col1:
-            # Graphique BDI
-            fig_bdi = go.Figure()
-            fig_bdi.add_trace(go.Scatter(
-                x=df_bdi.index, y=df_bdi.values,
-                mode="lines", name="BDI",
-                line=dict(color="#f5c518", width=2),
-                fill="tozeroy", fillcolor="rgba(245,197,24,0.06)"
-            ))
-            # Zones de référence
-            fig_bdi.add_hrect(y0=0,    y1=1000, fillcolor="rgba(63,185,80,0.05)",  line_width=0)
-            fig_bdi.add_hrect(y0=1000, y1=2000, fillcolor="rgba(245,197,24,0.05)", line_width=0)
-            fig_bdi.add_hrect(y0=2000, y1=6000, fillcolor="rgba(248,81,73,0.05)",  line_width=0)
-            fig_bdi.add_hline(y=1000, line_dash="dot", line_color="#3fb950", line_width=1,
-                              annotation_text="Fret bon marché", annotation_font_color="#3fb950", annotation_font_size=10)
-            fig_bdi.add_hline(y=2000, line_dash="dot", line_color="#f85149", line_width=1,
-                              annotation_text="Fret cher", annotation_font_color="#f85149", annotation_font_size=10)
-            fig_bdi.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
-                xaxis=dict(gridcolor="#21262d"),
-                yaxis=dict(gridcolor="#21262d", title="Points"),
-                margin=dict(l=10, r=10, t=10, b=10), height=300,
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig_bdi, use_container_width=True)
-
-        with bdi_col2:
             st.markdown(f"""
-            <div class="metric-card" style="margin-top:10px">
-                <div class="metric-label">Baltic Dry Index</div>
-                <div class="metric-value" style="color:{bdi_color}">{bdi_last:,.0f}</div>
-                <div class="metric-unit">{bdi_label}</div>
-                <br>
-                <span class="delta-badge {delta_cls}">{arrow} {sign}{bdi_delta:.0f} pts ({sign}{bdi_pct:.1f}%)</span>
-                <br><br>
-                <div class="metric-unit" style="text-align:left; line-height:1.8">
-                    🟢 &lt; 1 000 → fret bon marché<br>
-                    🟡 1 000–2 000 → normal<br>
-                    🔴 &gt; 2 000 → fret cher<br><br>
-                    <span style="color:#484f58">BDI↑ = basis Europe↑<br>coût transport Brésil→Rotterdam plus élevé</span>
+            <div class="metric-card" style="margin-bottom:10px; text-align:left;
+                         border-color:{'#3fb950' if r['marge'] > 0 else '#30363d'};">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-family:'Syne',sans-serif; font-weight:700;
+                                 font-size:1rem; color:#e6edf3;">{r['route']}</span>
+                    <span style="font-family:'Space Mono',monospace; font-size:0.75rem;
+                                 color:{color}; font-weight:700;">{icon} {status}</span>
+                </div>
+                <div style="font-family:'Space Mono',monospace; font-size:0.72rem;
+                             color:#7d8590; margin-top:10px; line-height:2;">
+                    Spot origine &nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">{r['orig']:.2f} USD/t</strong><br>
+                    Spot destination : <strong style="color:#e6edf3">{r['dest']:.2f} USD/t</strong><br>
+                    Fret &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">− {r['fret']:.2f} USD/t</strong><br>
+                    Frais portuaires : <strong style="color:#e6edf3">− {r['frais']:.2f} USD/t</strong>
+                </div>
+                <div style="margin-top:10px; padding-top:10px; border-top:1px solid #21262d;
+                             font-family:'Syne',sans-serif; font-weight:800; font-size:1.3rem;
+                             color:{color};">
+                    Marge nette : {r['marge']:+.2f} USD/t
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-        # Corrélation glissante BDI vs ZS
-        df_bdi_merged = pd.DataFrame(df_bdi).join(df_zs_bdi["ZS_d"], how="inner")
-        df_bdi_merged.columns = ["BDI", "ZS_d"]
-
-        if len(df_bdi_merged) >= 60:
-            df_bdi_merged["corr_60"] = df_bdi_merged["BDI"].rolling(60).corr(df_bdi_merged["ZS_d"])
-            fig_corr_bdi = go.Figure()
-            fig_corr_bdi.add_trace(go.Scatter(
-                x=df_bdi_merged.index, y=df_bdi_merged["corr_60"],
-                mode="lines", name="Corrélation 60j",
-                line=dict(color="#f78166", width=1.5),
-                fill="tozeroy", fillcolor="rgba(247,129,102,0.07)"
-            ))
-            fig_corr_bdi.add_hline(y=0, line_color="#484f58", line_width=1)
-            fig_corr_bdi.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
-                xaxis=dict(gridcolor="#21262d"),
-                yaxis=dict(gridcolor="#21262d", title="Corrélation", range=[-1, 1]),
-                margin=dict(l=10, r=10, t=10, b=10), height=180,
-            )
-            st.caption("📊 Corrélation glissante 60j BDI vs ZS — si positive : quand le fret monte, le soja monte aussi (tension globale sur les flux)")
-            st.plotly_chart(fig_corr_bdi, use_container_width=True)
-
-except Exception as e:
-    st.warning(f"Impossible de charger le BDI : {e}")
+else:
+    st.info("💡 Entrez au minimum deux prix spot pour calculer les arbitrages.")
 
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
