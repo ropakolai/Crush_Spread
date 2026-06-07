@@ -598,8 +598,8 @@ st.markdown("---")
 st.markdown('<p class="section-title">Prix Spot</p>', unsafe_allow_html=True)
 st.markdown("""
 <div class="info-box">
-    🌍 <strong style="color:#e6edf3">Soja Spot FOB — Pays-Bas</strong><br><br>
-    Prix spot physique du soja FOB Rotterdam/Pays-Bas, mis à jour en temps réel.<br><br>
+    🌍 <strong style="color:#e6edf3">Soja Spot </strong><br><br>
+    Prix spot physique du soja, mis à jour en temps réel.<br><br>
     <a href="https://commoditieschart.net/agriculture/Netherlands-fob-soybean-Spot-Price"
        target="_blank"
        style="color:#f5c518; font-family:'Space Mono',monospace; font-size:0.78rem;">
