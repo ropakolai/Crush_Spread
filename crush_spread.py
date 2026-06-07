@@ -360,8 +360,7 @@ st.markdown("---")
 st.markdown('<p class="section-title">Historique</p>', unsafe_allow_html=True)
 
 try:
-    df = hist.copy()
-    df = df.dropna()
+    df = hist[["ZS", "ZL", "ZM"]].copy().dropna()
 
     # Conversion en dollars (ZS et ZL sont en ¢)
     df["ZS_d"] = df["ZS"] * 0.01
@@ -503,8 +502,9 @@ try:
     df_zs_hist["ZS_d"] = df_zs_hist["ZS"] * 0.01
 
     df_fx = pd.DataFrame(df_brl)
-    df_fx.index = pd.to_datetime(df_fx.index).tz_localize(None) if pd.to_datetime(df_fx.index).tzinfo else pd.to_datetime(df_fx.index)
-    df_zs_hist.index = pd.to_datetime(df_zs_hist.index).tz_localize(None) if pd.to_datetime(df_zs_hist.index).tzinfo else pd.to_datetime(df_zs_hist.index)
+    # Normaliser les index en dates sans timezone
+    df_fx.index       = pd.DatetimeIndex(df_fx.index).normalize().tz_localize(None) if pd.DatetimeIndex(df_fx.index).tz is not None else pd.DatetimeIndex(df_fx.index).normalize()
+    df_zs_hist.index  = pd.DatetimeIndex(df_zs_hist.index).normalize().tz_localize(None) if pd.DatetimeIndex(df_zs_hist.index).tz is not None else pd.DatetimeIndex(df_zs_hist.index).normalize()
     df_merged = df_fx.join(df_zs_hist["ZS_d"], how="inner")
 
     fig_brl = make_subplots(specs=[[{"secondary_y": True}]])
