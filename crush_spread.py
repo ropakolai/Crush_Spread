@@ -559,122 +559,54 @@ except Exception as e:
 st.markdown("---")
 st.markdown('<p class="section-title">Basis (saisie manuelle)</p>', unsafe_allow_html=True)
 
-spot_price = st.sidebar.number_input(
-    "Prix spot local ($/bss)",
-    min_value=0.0, max_value=50.0,
-    value=0.0, step=0.01,
-    format="%.4f",
-    help="Entrez votre prix spot physique local en $/boisseau"
+spot_price_t = st.sidebar.number_input(
+    "Prix spot local (USD/tonne)",
+    min_value=0.0, max_value=1000.0,
+    value=0.0, step=0.10,
+    format="%.2f",
+    help="Entrez votre prix spot en USD/tonne métrique (ex: 431.90). Conversion en $/bss automatique."
 )
 
-if spot_price > 0 and zs is not None:
-    basis = spot_price - (zs / 100)
-    basis_color = "#3fb950" if basis >= 0 else "#f85149"
-    basis_label = "prime" if basis >= 0 else "décote"
+TONNES_PER_BUSHEL = 1 / 36.744  # 1 boisseau soja = 1/36.744 tonne
+
+if spot_price_t > 0 and zs is not None:
+    spot_price_bss = spot_price_t / 36.744   # conversion USD/t → $/bss
+    futures_bss    = zs / 100                 # ¢/bss → $/bss
+    basis          = spot_price_bss - futures_bss
+    basis_color    = "#3fb950" if basis >= 0 else "#f85149"
+    basis_label    = "prime" if basis >= 0 else "décote"
     b_col1, b_col2, b_col3 = st.columns([1, 2, 1])
     with b_col2:
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Basis — {basis_label} sur le CBOT</div>
             <div class="metric-value" style="color:{basis_color}">${basis:+.4f}/bss</div>
-            <div class="metric-unit">Spot {spot_price:.4f} − Futures {zs/100:.4f}</div>
+            <div class="metric-unit">
+                Spot {spot_price_t:.2f} USD/t = {spot_price_bss:.4f} $/bss<br>
+                Futures ZS = {futures_bss:.4f} $/bss<br>
+                Conversion : 1 t = 36.744 boisseaux
+            </div>
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("💡 Entrez votre prix spot local dans la sidebar pour calculer le basis.")
+    st.info("💡 Entrez votre prix spot en USD/tonne dans la sidebar pour calculer le basis.")
 
 
-# ── Prix Spot Mondiaux ────────────────────────────────────────────────────────
+
+# ── Prix Spot ─────────────────────────────────────────────────────────────────
 st.markdown("---")
-st.markdown('<p class="section-title">Prix Spot Mondiaux — Sources</p>', unsafe_allow_html=True)
-
-spot_sources = {
-    "🇫🇷 France": [
-        {
-            "name": "FranceAgriMer",
-            "desc": "Cotations officielles hebdomadaires — Rouen, La Pallice, Bordeaux",
-            "freq": "Hebdo · Vendredi",
-            "gratuit": True,
-            "url": "https://www.franceagrimer.fr/filiere-grandes-cultures/Grandes-cultures/Marches/Les-cours",
-        },
-        {
-            "name": "Agritel",
-            "desc": "Prix spot & forward, marchés physiques France",
-            "freq": "Temps réel (premium)",
-            "gratuit": False,
-            "url": "https://www.agritel.com",
-        },
-        {
-            "name": "Euronext Matif",
-            "desc": "Cotations futures colza/blé, contexte marché européen",
-            "freq": "Temps réel",
-            "gratuit": True,
-            "url": "https://www.euronext.com/fr/products/commodities",
-        },
-    ],
-    "🇺🇸 États-Unis": [
-        {
-            "name": "Barchart — Cash Bids",
-            "desc": "Prix spot par élévateur sur tout le territoire US, par région",
-            "freq": "Temps réel",
-            "gratuit": True,
-            "url": "https://www.barchart.com/futures/quotes/ZS*0/cash-grain-bids",
-        },
-        {
-            "name": "DTN Progressive Farmer",
-            "desc": "Prix spot granulaires par élévateur et région US",
-            "freq": "Temps réel (premium)",
-            "gratuit": False,
-            "url": "https://www.dtnpf.com/agriculture/web/ag/grains/cash-bids",
-        },
-        {
-            "name": "USDA AMS",
-            "desc": "Prix officiels par région, marchés physiques US",
-            "freq": "Quotidien",
-            "gratuit": True,
-            "url": "https://www.ams.usda.gov/market-news/grain-feed",
-        },
-    ],
-    "🇧🇷 Brésil": [
-        {
-            "name": "CEPEA / ESALQ",
-            "desc": "Référence absolue — prix spot soja Paranaguá + intérieur",
-            "freq": "Quotidien",
-            "gratuit": True,
-            "url": "https://www.cepea.esalq.usp.br/br/indicador/soja.aspx",
-        },
-        {
-            "name": "Notícias Agrícolas",
-            "desc": "Agrégateur de prix spot brésiliens, plusieurs places",
-            "freq": "Quotidien",
-            "gratuit": True,
-            "url": "https://www.noticiasagricolas.com.br/cotacoes/soja",
-        },
-    ],
-}
-
-for region, sources in spot_sources.items():
-    st.markdown(f"**{region}**")
-    cols = st.columns(len(sources))
-    for col, src in zip(cols, sources):
-        badge = "🟢 Gratuit" if src["gratuit"] else "🔒 Premium"
-        with col:
-            st.markdown(f"""
-            <div class="metric-card" style="text-align:left; padding:16px 18px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-family:'Syne',sans-serif; font-weight:700; font-size:0.9rem; color:#e6edf3;">{src["name"]}</span>
-                    <span style="font-family:'Space Mono',monospace; font-size:0.62rem; color:{'#3fb950' if src['gratuit'] else '#f5c518'};">{badge}</span>
-                </div>
-                <div style="font-family:'Space Mono',monospace; font-size:0.7rem; color:#7d8590; margin-bottom:8px; line-height:1.5;">{src["desc"]}</div>
-                <div style="font-family:'Space Mono',monospace; font-size:0.65rem; color:#484f58; margin-bottom:10px;">⏱ {src["freq"]}</div>
-                <a href="{src["url"]}" target="_blank"
-                   style="font-family:'Space Mono',monospace; font-size:0.7rem; color:#f5c518; text-decoration:none;">
-                   → Accéder ↗
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
-    st.markdown("")
-
+st.markdown('<p class="section-title">Prix Spot</p>', unsafe_allow_html=True)
+st.markdown("""
+<div class="info-box">
+    🌍 <strong style="color:#e6edf3">Soja Spot FOB — Pays-Bas</strong><br><br>
+    Prix spot physique du soja FOB Rotterdam/Pays-Bas, mis à jour en temps réel.<br><br>
+    <a href="https://commoditieschart.net/agriculture/Netherlands-fob-soybean-Spot-Price"
+       target="_blank"
+       style="color:#f5c518; font-family:'Space Mono',monospace; font-size:0.78rem;">
+       → commoditieschart.net/agriculture/Netherlands-fob-soybean-Spot-Price ↗
+    </a>
+</div>
+""", unsafe_allow_html=True)
 
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
