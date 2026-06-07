@@ -443,99 +443,48 @@ try:
 except Exception:
     pass
 
-# ── Stock-to-Use (USDA PSD API) ───────────────────────────────────────────────
+
+# ── Ressources USDA ───────────────────────────────────────────────────────────
 st.markdown("---")
-st.markdown('<p class="section-title">Stock-to-Use ratio — USDA</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-title">Ressources fondamentales</p>', unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600*6)
-def fetch_stu():
-    """
-    USDA FAS OpenData API — soja mondial.
-    URL : /OpenData/api/psd/commodity/2222000/country/all/year/{year}
-    attributeId : 20=Production, 176=Total Use, 45=Ending Stocks
-    """
-    rows = []
-    current_year = datetime.now().year
-    for year in range(2005, current_year + 2):
-        url = f"https://apps.fas.usda.gov/OpenData/api/psd/commodity/2222000/country/all/year/{year}"
-        try:
-            r = requests.get(url, timeout=10, headers={"Accept": "application/json"})
-            if r.status_code != 200:
-                continue
-            for item in r.json():
-                attr = item.get("attributeId")
-                if attr in [20, 176, 45]:
-                    rows.append({
-                        "year":        item.get("marketYear"),
-                        "attributeId": attr,
-                        "value":       item.get("value") or 0,
-                    })
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df_raw = pd.DataFrame(rows).dropna(subset=["year", "value"])
-    df_raw["year"] = df_raw["year"].astype(int)
-    df_pivot = df_raw.groupby(["year", "attributeId"])["value"].sum().unstack("attributeId")
-    df_pivot = df_pivot.rename(columns={20: "production", 176: "total_use", 45: "ending_stocks"})
-    df_pivot = df_pivot.dropna()
-    df_pivot["stu_pct"] = (df_pivot["ending_stocks"] / df_pivot["total_use"]) * 100
-    return df_pivot.sort_index()
-
-try:
-    df_stu = fetch_stu()
-    if df_stu.empty:
-        st.warning("Données USDA indisponibles.")
-    else:
-        col_stu1, col_stu2 = st.columns([2, 1])
-
-        with col_stu1:
-            fig_stu = go.Figure()
-            # Barres STU
-            colors_stu = ["#f85149" if v < 10 else "#f5c518" if v < 15 else "#3fb950"
-                          for v in df_stu["stu_pct"]]
-            fig_stu.add_trace(go.Bar(
-                x=df_stu.index, y=df_stu["stu_pct"],
-                name="Stock-to-Use (%)",
-                marker_color=colors_stu,
-                opacity=0.85,
-            ))
-            # Ligne seuil tendu
-            fig_stu.add_hline(y=10, line_dash="dash", line_color="#f85149",
-                              annotation_text="Seuil tendu 10%", annotation_font_color="#f85149")
-            fig_stu.add_hline(y=15, line_dash="dot", line_color="#f5c518",
-                              annotation_text="Seuil modéré 15%", annotation_font_color="#f5c518")
-            fig_stu.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
-                xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d", title="STU (%)"),
-                margin=dict(l=10, r=10, t=20, b=10), height=320,
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig_stu, use_container_width=True)
-
-        with col_stu2:
-            last = df_stu.iloc[-1]
-            stu_val  = last["stu_pct"]
-            stu_color = "#f85149" if stu_val < 10 else "#f5c518" if stu_val < 15 else "#3fb950"
-            stu_label = "🔴 TENDU" if stu_val < 10 else "🟡 MODÉRÉ" if stu_val < 15 else "🟢 CONFORTABLE"
-            st.markdown(f"""
-            <div class="metric-card" style="margin-top:10px">
-                <div class="metric-label">STU Mondial {int(df_stu.index[-1])}/{int(df_stu.index[-1])+1}</div>
-                <div class="metric-value" style="color:{stu_color}">{stu_val:.1f}%</div>
-                <div class="metric-unit">{stu_label}</div>
-                <br>
-                <div class="metric-unit">Production : {last['production']:.0f} Mt</div>
-                <div class="metric-unit">Consommation : {last['total_use']:.0f} Mt</div>
-                <div class="metric-unit">Stocks fin : {last['ending_stocks']:.0f} Mt</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-except Exception as e:
-    st.warning(f"Impossible de charger les données USDA : {e}")
-
+col_r1, col_r2, col_r3 = st.columns(3)
+with col_r1:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-label">📋 Rapport WASDE</div>
+        <div class="metric-unit" style="margin-top:10px">Bilan offre/demande mondial soja<br>Publié le 2ème vendredi du mois</div>
+        <br>
+        <a href="https://www.usda.gov/oce/commodity/wasde" target="_blank"
+           style="color:#f5c518;font-family:'Space Mono',monospace;font-size:0.78rem;">
+           → usda.gov/wasde
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+with col_r2:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-label">📦 Export Sales US</div>
+        <div class="metric-unit" style="margin-top:10px">Exports soja US hebdomadaires<br>Publié chaque jeudi</div>
+        <br>
+        <a href="https://apps.fas.usda.gov/export-sales/" target="_blank"
+           style="color:#f5c518;font-family:'Space Mono',monospace;font-size:0.78rem;">
+           → fas.usda.gov/export-sales
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+with col_r3:
+    st.markdown("""
+    <div class="metric-card">
+        <div class="metric-label">🌍 PSD Online</div>
+        <div class="metric-unit" style="margin-top:10px">Production, stocks & consommation mondiales</div>
+        <br>
+        <a href="https://apps.fas.usda.gov/psdonline/app/index.html" target="_blank"
+           style="color:#f5c518;font-family:'Space Mono',monospace;font-size:0.78rem;">
+           → fas.usda.gov/psdonline
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ── BRL/USD + corrélation ZS ──────────────────────────────────────────────────
 st.markdown("---")
@@ -604,76 +553,6 @@ try:
 
 except Exception as e:
     st.warning(f"Impossible de charger BRL/USD : {e}")
-
-
-# ── Export Sales US (USDA) ────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown('<p class="section-title">Export Sales US — USDA</p>', unsafe_allow_html=True)
-
-@st.cache_data(ttl=3600*6)
-def fetch_export_sales():
-    """
-    USDA FAS OpenData API — Export Sales hebdomadaires soja US.
-    URL correcte : /OpenData/api/esr/exports/commodityCode/{code}/allCountries/marketYear/{year}
-    Commodity 801 = Soybeans dans l'ESR (différent du PSD)
-    """
-    from datetime import date
-    rows = []
-    current_year = date.today().year
-    # ESR utilise son propre système de codes : 801 = Soybeans
-    for year in [current_year - 1, current_year]:
-        url = f"https://apps.fas.usda.gov/OpenData/api/esr/exports/commodityCode/801/allCountries/marketYear/{year}"
-        try:
-            r = requests.get(url, timeout=10, headers={"Accept": "application/json"})
-            if r.status_code != 200:
-                continue
-            for item in r.json():
-                rows.append({
-                    "week":         item.get("weeklyExportSalesDate") or item.get("reportDate"),
-                    "net_sales_mt": item.get("netSales") or item.get("currentMYNetSales") or 0,
-                    "exports_mt":   item.get("exports") or item.get("currentMYExports") or 0,
-                })
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows).dropna(subset=["week"])
-    df["week"] = pd.to_datetime(df["week"])
-    # Agréger par semaine (toutes destinations)
-    df = df.groupby("week")[["net_sales_mt", "exports_mt"]].sum().reset_index()
-    return df.sort_values("week").tail(52)
-
-try:
-    df_exp = fetch_export_sales()
-    if df_exp.empty:
-        st.info("Données d'export sales non disponibles.")
-    else:
-        fig_exp = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.08,
-                                subplot_titles=["Ventes nettes (1000 MT)", "Exports réels (1000 MT)"])
-        fig_exp.add_trace(go.Bar(
-            x=df_exp["week"], y=df_exp["net_sales_mt"],
-            name="Ventes nettes", marker_color="#58a6ff", opacity=0.8
-        ), row=1, col=1)
-        fig_exp.add_trace(go.Bar(
-            x=df_exp["week"], y=df_exp["exports_mt"],
-            name="Exports réels", marker_color="#3fb950", opacity=0.8
-        ), row=2, col=1)
-        fig_exp.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
-            showlegend=False,
-            margin=dict(l=10, r=10, t=30, b=10), height=400,
-        )
-        for axis in ["xaxis", "xaxis2", "yaxis", "yaxis2"]:
-            fig_exp.update_layout(**{axis: dict(gridcolor="#21262d")})
-        st.plotly_chart(fig_exp, use_container_width=True)
-        st.caption("Source : USDA Export Sales Reporting — données hebdomadaires")
-
-except Exception as e:
-    st.info(f"Export sales USDA : {e}")
 
 
 # ── Basis manuel ──────────────────────────────────────────────────────────────
