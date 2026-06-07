@@ -671,19 +671,18 @@ st.markdown('<p class="section-title">Calculateur d\'Arbitrage Géographique</p>
 
 st.markdown("""
 <div class="info-box" style="margin-bottom:16px">
-    Entrez les prix spot de chaque origine/destination (en <strong style="color:#e6edf3">USD/tonne</strong>)
-    et les coûts de fret entre chaque paire de points.
-    L'app calcule automatiquement quels arbitrages sont rentables.
+    Entrez les prix spot de chaque place (en <strong style="color:#e6edf3">USD/tonne</strong>).
+    Les coûts tout compris (fret Panamax + frais portuaires) sont pré-remplis avec les moyennes du marché — modifiables si besoin.
     <br><br>
-    <span style="color:#484f58">Arb rentable si : Spot destination − Spot origine − Fret − Frais &gt; 0</span>
+    <span style="color:#484f58">Arb rentable si : Spot destination − Spot origine − Coût total &gt; 0</span>
 </div>
 """, unsafe_allow_html=True)
 
 ARB_PLACES = {
-    "🇧🇷 Paranaguá (Brésil)":   "BR",
-    "🇺🇸 Gulf (États-Unis)":     "US",
-    "🇳🇱 Rotterdam (Pays-Bas)":  "NL",
-    "🇦🇷 Rosario (Argentine)":   "AR",
+    "🇧🇷 Paranaguá": "BR",
+    "🇺🇸 US Gulf":   "US",
+    "🇳🇱 Rotterdam": "NL",
+    "🇦🇷 Rosario":   "AR",
 }
 
 ARB_ROUTES = [
@@ -695,60 +694,54 @@ ARB_ROUTES = [
     ("AR", "BR", "🇦🇷 → 🇧🇷"),
 ]
 
+# Coûts tout compris par route : fret Panamax + frais portuaires (chargement + déchargement)
+# Sources : Baltic Panamax moyenne 2024-2025, frais portuaires standard
+# Sources : USDA AMS Q1 2025 (Paranaguá→Hamburg ~36$/t fret),
+# Fastmarkets juin 2026 (Brésil→Asie ~45$/t, US Gulf→Asie ~58$/t),
+# Frais portuaires : estimations marché standard
+ROUTE_COSTS = {
+    # (orig, dest): (label, coût_total, dont_fret, dont_frais)
+    ("BR","NL"): ("🇧🇷→🇳🇱", 48.0, 36.0, 12.0),  # USDA AMS Q1 2025
+    ("US","NL"): ("🇺🇸→🇳🇱", 42.0, 31.0, 11.0),  # estimé vs BR→NL
+    ("AR","NL"): ("🇦🇷→🇳🇱", 51.0, 38.0, 13.0),  # légèrement > BR→NL
+    ("BR","US"): ("🇧🇷→🇺🇸", 30.0, 20.0, 10.0),  # route plus courte
+    ("AR","US"): ("🇦🇷→🇺🇸", 32.0, 22.0, 10.0),  # similaire BR→US
+    ("AR","BR"): ("🇦🇷→🇧🇷", 20.0, 13.0,  7.0),  # route courte cabotage
+}
+
 # ── Saisie des prix spot ──────────────────────────────────────────────────────
-st.markdown("**1. Prix spot par origine/destination (USD/tonne)**")
+st.markdown("**1. Prix spot (USD/tonne)**")
 arb_cols = st.columns(4)
 spot_inputs = {}
 for col, (label, code) in zip(arb_cols, ARB_PLACES.items()):
     with col:
         spot_inputs[code] = st.number_input(
-            label,
-            min_value=0.0, max_value=2000.0,
+            label, min_value=0.0, max_value=2000.0,
             value=0.0, step=0.5, format="%.2f",
             key=f"spot_{code}"
         )
 
-# ── Saisie des frais portuaires fixes ────────────────────────────────────────
-st.markdown("**2. Frais portuaires fixes par tonne (USD/tonne)**")
-port_col1, port_col2, _ = st.columns([1, 1, 2])
-with port_col1:
-    frais_origine = st.number_input("Frais port origine", min_value=0.0, max_value=50.0,
-                                     value=3.0, step=0.5, format="%.2f",
-                                     help="Manutention, inspection, chargement à l'origine")
-with port_col2:
-    frais_destination = st.number_input("Frais port destination", min_value=0.0, max_value=50.0,
-                                         value=4.0, step=0.5, format="%.2f",
-                                         help="Manutention, déchargement à destination")
-
-frais_total = frais_origine + frais_destination
-
-# ── Saisie des coûts de fret par route ───────────────────────────────────────
-st.markdown("**3. Coût de fret Panamax par route (USD/tonne)**")
-fret_cols = st.columns(3)
-fret_inputs = {}
-route_labels = {
-    ("BR","NL"): ("🇧🇷→🇳🇱", 50.0),
-    ("US","NL"): ("🇺🇸→🇳🇱", 38.0),
-    ("AR","NL"): ("🇦🇷→🇳🇱", 52.0),
-    ("BR","US"): ("🇧🇷→🇺🇸", 28.0),
-    ("AR","US"): ("🇦🇷→🇺🇸", 30.0),
-    ("AR","BR"): ("🇦🇷→🇧🇷", 18.0),
-}
-for i, ((orig, dest), (label, default)) in enumerate(route_labels.items()):
-    with fret_cols[i % 3]:
-        fret_inputs[(orig, dest)] = st.number_input(
-            f"Fret {label}",
-            min_value=0.0, max_value=200.0,
-            value=default, step=0.5, format="%.2f",
-            key=f"fret_{orig}_{dest}"
-        )
+# ── Coûts par route (modifiables) ────────────────────────────────────────────
+with st.expander("⚙️ Ajuster les coûts par route (optionnel)", expanded=False):
+    st.caption("Fret Panamax + frais portuaires tout compris. Moyennes 2024-2025.")
+    cost_cols = st.columns(3)
+    cost_inputs = {}
+    for i, ((orig, dest), (label, total, fret, frais)) in enumerate(ROUTE_COSTS.items()):
+        with cost_cols[i % 3]:
+            cost_inputs[(orig, dest)] = st.number_input(
+                f"Coût {label} ($/t)",
+                min_value=0.0, max_value=300.0,
+                value=total, step=0.5, format="%.2f",
+                help=f"Dont fret ~{fret} $/t + frais portuaires ~{frais} $/t",
+                key=f"cost_{orig}_{dest}"
+            )
 
 # ── Calcul et affichage ───────────────────────────────────────────────────────
 spots_renseignes = {k: v for k, v in spot_inputs.items() if v > 0}
 
 if len(spots_renseignes) >= 2:
     st.markdown("---")
-    st.markdown("**Résultats des arbitrages**")
+    st.markdown("**Résultats**")
 
     results = []
     for orig, dest, route_label in ARB_ROUTES:
@@ -756,53 +749,47 @@ if len(spots_renseignes) >= 2:
             continue
         spot_o = spot_inputs[orig]
         spot_d = spot_inputs[dest]
-        fret   = fret_inputs.get((orig, dest), fret_inputs.get((dest, orig), 0))
-        marge  = spot_d - spot_o - fret - frais_total
+        cout   = cost_inputs.get((orig, dest), ROUTE_COSTS.get((orig, dest), ("", 0, 0, 0))[1])
+        marge  = spot_d - spot_o - cout
+        _, _, fret_ind, frais_ind = ROUTE_COSTS.get((orig, dest), ("", cout, 0, 0))
         results.append({
-            "route":   route_label,
-            "orig":    spot_o,
-            "dest":    spot_d,
-            "fret":    fret,
-            "frais":   frais_total,
-            "marge":   marge,
+            "route": route_label, "orig": spot_o, "dest": spot_d,
+            "cout": cout, "fret": fret_ind, "frais": frais_ind, "marge": marge,
         })
 
-    if not results:
-        st.info("Entrez au moins deux prix spot sur des places différentes.")
-    else:
-        # Trier par marge décroissante
-        results.sort(key=lambda x: x["marge"], reverse=True)
+    results.sort(key=lambda x: x["marge"], reverse=True)
 
-        for r in results:
-            color  = "#3fb950" if r["marge"] > 0 else "#f85149"
-            status = "✅ ARB RENTABLE" if r["marge"] > 0 else "❌ Non rentable"
-            icon   = "🟢" if r["marge"] > 0 else "🔴"
-
-            st.markdown(f"""
-            <div class="metric-card" style="margin-bottom:10px; text-align:left;
-                         border-color:{'#3fb950' if r['marge'] > 0 else '#30363d'};">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-family:'Syne',sans-serif; font-weight:700;
-                                 font-size:1rem; color:#e6edf3;">{r['route']}</span>
-                    <span style="font-family:'Space Mono',monospace; font-size:0.75rem;
-                                 color:{color}; font-weight:700;">{icon} {status}</span>
-                </div>
-                <div style="font-family:'Space Mono',monospace; font-size:0.72rem;
-                             color:#7d8590; margin-top:10px; line-height:2;">
-                    Spot origine &nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">{r['orig']:.2f} USD/t</strong><br>
-                    Spot destination : <strong style="color:#e6edf3">{r['dest']:.2f} USD/t</strong><br>
-                    Fret &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">− {r['fret']:.2f} USD/t</strong><br>
-                    Frais portuaires : <strong style="color:#e6edf3">− {r['frais']:.2f} USD/t</strong>
-                </div>
-                <div style="margin-top:10px; padding-top:10px; border-top:1px solid #21262d;
-                             font-family:'Syne',sans-serif; font-weight:800; font-size:1.3rem;
-                             color:{color};">
-                    Marge nette : {r['marge']:+.2f} USD/t
-                </div>
+    for r in results:
+        color  = "#3fb950" if r["marge"] > 0 else "#f85149"
+        status = "✅ ARB RENTABLE" if r["marge"] > 0 else "❌ Non rentable"
+        icon   = "🟢" if r["marge"] > 0 else "🔴"
+        st.markdown(f"""
+        <div class="metric-card" style="margin-bottom:10px; text-align:left;
+                     border-color:{'#3fb950' if r['marge'] > 0 else '#30363d'};">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-family:'Syne',sans-serif; font-weight:700;
+                             font-size:1rem; color:#e6edf3;">{r['route']}</span>
+                <span style="font-family:'Space Mono',monospace; font-size:0.75rem;
+                             color:{color}; font-weight:700;">{icon} {status}</span>
             </div>
-            """, unsafe_allow_html=True)
+            <div style="font-family:'Space Mono',monospace; font-size:0.72rem;
+                         color:#7d8590; margin-top:10px; line-height:2;">
+                Spot origine &nbsp;&nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">{r['orig']:.2f} USD/t</strong><br>
+                Spot destination : <strong style="color:#e6edf3">{r['dest']:.2f} USD/t</strong><br>
+                Fret Panamax &nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">~ {r['fret']:.0f} USD/t</strong><br>
+                Frais portuaires : <strong style="color:#e6edf3">~ {r['frais']:.0f} USD/t</strong><br>
+                Coût total &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <strong style="color:#e6edf3">− {r['cout']:.2f} USD/t</strong>
+            </div>
+            <div style="margin-top:10px; padding-top:10px; border-top:1px solid #21262d;
+                         font-family:'Syne',sans-serif; font-weight:800; font-size:1.3rem;
+                         color:{color};">
+                Marge nette : {r['marge']:+.2f} USD/t
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 else:
     st.info("💡 Entrez au minimum deux prix spot pour calculer les arbitrages.")
+
 
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
