@@ -598,8 +598,8 @@ st.markdown("---")
 st.markdown('<p class="section-title">Prix Spot</p>', unsafe_allow_html=True)
 st.markdown("""
 <div class="info-box">
-    🌍 <strong style="color:#e6edf3">Soja Spot </strong><br><br>
-    Prix spot physique du soja, mis à jour en temps réel.<br><br>
+    🌍 <strong style="color:#e6edf3">Soja Spot FOB — Pays-Bas</strong><br><br>
+    Prix spot physique du soja FOB Rotterdam/Pays-Bas, mis à jour en temps réel.<br><br>
     <a href="https://commoditieschart.net/agriculture/Netherlands-fob-soybean-Spot-Price"
        target="_blank"
        style="color:#f5c518; font-family:'Space Mono',monospace; font-size:0.78rem;">
@@ -607,6 +607,117 @@ st.markdown("""
     </a>
 </div>
 """, unsafe_allow_html=True)
+
+# ── Baltic Dry Index ──────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Baltic Dry Index — Coût du fret maritime</p>', unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600*4)
+def fetch_bdi(period="1y"):
+    bdi = yf.Ticker("BDI").history(period=period, auto_adjust=True)["Close"].dropna()
+    if bdi.empty:
+        # Fallback ticker alternatif
+        bdi = yf.Ticker("^BDI").history(period=period, auto_adjust=True)["Close"].dropna()
+    return bdi
+
+try:
+    df_bdi = fetch_bdi(period)
+
+    if df_bdi.empty:
+        st.warning("BDI indisponible via yfinance.")
+    else:
+        # Aligner avec ZS
+        df_zs_bdi = hist[["ZS"]].copy().dropna()
+        df_zs_bdi["ZS_d"] = df_zs_bdi["ZS"] * 0.01
+        df_zs_bdi.index = df_zs_bdi.index.tz_localize(None) if df_zs_bdi.index.tz else df_zs_bdi.index
+        df_bdi.index    = df_bdi.index.tz_localize(None) if df_bdi.index.tz else df_bdi.index
+
+        bdi_last  = float(df_bdi.iloc[-1])
+        bdi_prev  = float(df_bdi.iloc[-2]) if len(df_bdi) > 1 else bdi_last
+        bdi_delta = bdi_last - bdi_prev
+        bdi_pct   = bdi_delta / bdi_prev * 100
+
+        # Niveau BDI : bas < 1000, normal 1000-2000, élevé > 2000
+        bdi_color = "#f85149" if bdi_last > 2000 else "#f5c518" if bdi_last > 1000 else "#3fb950"
+        bdi_label = "🔴 FRET CHER" if bdi_last > 2000 else "🟡 MODÉRÉ" if bdi_last > 1000 else "🟢 FRET BON MARCHÉ"
+        sign      = "+" if bdi_delta >= 0 else ""
+        delta_cls = "delta-pos" if bdi_delta >= 0 else "delta-neg"
+        arrow     = "▲" if bdi_delta >= 0 else "▼"
+
+        # Ligne actuelle de BDI
+        bdi_col1, bdi_col2 = st.columns([2, 1])
+
+        with bdi_col1:
+            # Graphique BDI
+            fig_bdi = go.Figure()
+            fig_bdi.add_trace(go.Scatter(
+                x=df_bdi.index, y=df_bdi.values,
+                mode="lines", name="BDI",
+                line=dict(color="#f5c518", width=2),
+                fill="tozeroy", fillcolor="rgba(245,197,24,0.06)"
+            ))
+            # Zones de référence
+            fig_bdi.add_hrect(y0=0,    y1=1000, fillcolor="rgba(63,185,80,0.05)",  line_width=0)
+            fig_bdi.add_hrect(y0=1000, y1=2000, fillcolor="rgba(245,197,24,0.05)", line_width=0)
+            fig_bdi.add_hrect(y0=2000, y1=6000, fillcolor="rgba(248,81,73,0.05)",  line_width=0)
+            fig_bdi.add_hline(y=1000, line_dash="dot", line_color="#3fb950", line_width=1,
+                              annotation_text="Fret bon marché", annotation_font_color="#3fb950", annotation_font_size=10)
+            fig_bdi.add_hline(y=2000, line_dash="dot", line_color="#f85149", line_width=1,
+                              annotation_text="Fret cher", annotation_font_color="#f85149", annotation_font_size=10)
+            fig_bdi.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+                xaxis=dict(gridcolor="#21262d"),
+                yaxis=dict(gridcolor="#21262d", title="Points"),
+                margin=dict(l=10, r=10, t=10, b=10), height=300,
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_bdi, use_container_width=True)
+
+        with bdi_col2:
+            st.markdown(f"""
+            <div class="metric-card" style="margin-top:10px">
+                <div class="metric-label">Baltic Dry Index</div>
+                <div class="metric-value" style="color:{bdi_color}">{bdi_last:,.0f}</div>
+                <div class="metric-unit">{bdi_label}</div>
+                <br>
+                <span class="delta-badge {delta_cls}">{arrow} {sign}{bdi_delta:.0f} pts ({sign}{bdi_pct:.1f}%)</span>
+                <br><br>
+                <div class="metric-unit" style="text-align:left; line-height:1.8">
+                    🟢 &lt; 1 000 → fret bon marché<br>
+                    🟡 1 000–2 000 → normal<br>
+                    🔴 &gt; 2 000 → fret cher<br><br>
+                    <span style="color:#484f58">BDI↑ = basis Europe↑<br>coût transport Brésil→Rotterdam plus élevé</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Corrélation glissante BDI vs ZS
+        df_bdi_merged = pd.DataFrame(df_bdi).join(df_zs_bdi["ZS_d"], how="inner")
+        df_bdi_merged.columns = ["BDI", "ZS_d"]
+
+        if len(df_bdi_merged) >= 60:
+            df_bdi_merged["corr_60"] = df_bdi_merged["BDI"].rolling(60).corr(df_bdi_merged["ZS_d"])
+            fig_corr_bdi = go.Figure()
+            fig_corr_bdi.add_trace(go.Scatter(
+                x=df_bdi_merged.index, y=df_bdi_merged["corr_60"],
+                mode="lines", name="Corrélation 60j",
+                line=dict(color="#f78166", width=1.5),
+                fill="tozeroy", fillcolor="rgba(247,129,102,0.07)"
+            ))
+            fig_corr_bdi.add_hline(y=0, line_color="#484f58", line_width=1)
+            fig_corr_bdi.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+                xaxis=dict(gridcolor="#21262d"),
+                yaxis=dict(gridcolor="#21262d", title="Corrélation", range=[-1, 1]),
+                margin=dict(l=10, r=10, t=10, b=10), height=180,
+            )
+            st.caption("📊 Corrélation glissante 60j BDI vs ZS — si positive : quand le fret monte, le soja monte aussi (tension globale sur les flux)")
+            st.plotly_chart(fig_corr_bdi, use_container_width=True)
+
+except Exception as e:
+    st.warning(f"Impossible de charger le BDI : {e}")
 
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
