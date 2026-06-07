@@ -218,8 +218,9 @@ CONTRACTS = {
 
 @st.cache_data(ttl=60)
 def fetch_prices(period: str = "6mo"):
-    """Fetch current prices and historical data, ticker by ticker for robustness."""
-    tickers = list(CONTRACTS.keys())
+    """Fetch current prices and historical data, ticker by ticker for robustness.
+    Inclut BRL=X et BDI pour éviter le rate limiting sur des appels séparés."""
+    tickers = list(CONTRACTS.keys()) + ["BRL=X", "BDI"]
     current = {}
     prev    = {}
     hist_frames = {}
@@ -490,21 +491,19 @@ with col_r3:
 st.markdown("---")
 st.markdown('<p class="section-title">Compétitivité Brésil — BRL/USD vs ZS</p>', unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
-def fetch_brl(period="1y"):
-    brl = yf.Ticker("BRL=X").history(period=period, auto_adjust=True)["Close"].dropna()
-    # BRL=X = USD par BRL, on veut BRL par USD
-    return (1 / brl).rename("USDBRL")
-
 try:
-    df_brl = fetch_brl(period)
-    # Récupérer ZS sur la même période depuis hist déjà chargé
+    # BRL=X et ZS sont déjà dans hist (chargés dans fetch_prices)
+    df_brl_raw = hist[["BRL=X"]].dropna().copy() if "BRL=X" in hist.columns else pd.DataFrame()
+    if df_brl_raw.empty:
+        raise ValueError("BRL=X non disponible")
+    df_brl_raw["USDBRL"] = 1 / df_brl_raw["BRL=X"]
+    df_brl = df_brl_raw["USDBRL"]
+
     df_zs_hist = hist[["ZS"]].copy().dropna()
     df_zs_hist["ZS_d"] = df_zs_hist["ZS"] * 0.01
 
-    # Aligner les deux séries sur les dates communes
     df_fx = pd.DataFrame(df_brl)
-    df_fx.index = df_fx.index.tz_localize(None)
+    df_fx.index = df_fx.index.tz_localize(None) if df_fx.index.tz else df_fx.index
     df_zs_hist.index = df_zs_hist.index.tz_localize(None) if df_zs_hist.index.tz else df_zs_hist.index
     df_merged = df_fx.join(df_zs_hist["ZS_d"], how="inner")
 
@@ -612,25 +611,20 @@ st.markdown("""
 st.markdown("---")
 st.markdown('<p class="section-title">Baltic Dry Index — Coût du fret maritime</p>', unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600*4)
-def fetch_bdi(period="1y"):
-    bdi = yf.Ticker("BDI").history(period=period, auto_adjust=True)["Close"].dropna()
-    if bdi.empty:
-        # Fallback ticker alternatif
-        bdi = yf.Ticker("^BDI").history(period=period, auto_adjust=True)["Close"].dropna()
-    return bdi
-
 try:
-    df_bdi = fetch_bdi(period)
+    # BDI déjà dans hist (chargé dans fetch_prices)
+    df_bdi = hist[["BDI"]].dropna()["BDI"] if "BDI" in hist.columns else pd.Series(dtype=float)
+    if df_bdi.empty:
+        raise ValueError("BDI non disponible")
+
+    df_zs_bdi = hist[["ZS"]].copy().dropna()
+    df_zs_bdi["ZS_d"] = df_zs_bdi["ZS"] * 0.01
+    df_zs_bdi.index = df_zs_bdi.index.tz_localize(None) if df_zs_bdi.index.tz else df_zs_bdi.index
+    df_bdi.index    = df_bdi.index.tz_localize(None) if df_bdi.index.tz else df_bdi.index
 
     if df_bdi.empty:
         st.warning("BDI indisponible via yfinance.")
     else:
-        # Aligner avec ZS
-        df_zs_bdi = hist[["ZS"]].copy().dropna()
-        df_zs_bdi["ZS_d"] = df_zs_bdi["ZS"] * 0.01
-        df_zs_bdi.index = df_zs_bdi.index.tz_localize(None) if df_zs_bdi.index.tz else df_zs_bdi.index
-        df_bdi.index    = df_bdi.index.tz_localize(None) if df_bdi.index.tz else df_bdi.index
 
         bdi_last  = float(df_bdi.iloc[-1])
         bdi_prev  = float(df_bdi.iloc[-2]) if len(df_bdi) > 1 else bdi_last
