@@ -584,6 +584,98 @@ else:
     st.info("💡 Entrez votre prix spot local dans la sidebar pour calculer le basis.")
 
 
+# ── Prix Spot Mondiaux ────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Prix Spot Mondiaux — Sources</p>', unsafe_allow_html=True)
+
+spot_sources = {
+    "🇫🇷 France": [
+        {
+            "name": "FranceAgriMer",
+            "desc": "Cotations officielles hebdomadaires — Rouen, La Pallice, Bordeaux",
+            "freq": "Hebdo · Vendredi",
+            "gratuit": True,
+            "url": "https://www.franceagrimer.fr/filiere-grandes-cultures/Grandes-cultures/Marches/Les-cours",
+        },
+        {
+            "name": "Agritel",
+            "desc": "Prix spot & forward, marchés physiques France",
+            "freq": "Temps réel (premium)",
+            "gratuit": False,
+            "url": "https://www.agritel.com",
+        },
+        {
+            "name": "Euronext Matif",
+            "desc": "Cotations futures colza/blé, contexte marché européen",
+            "freq": "Temps réel",
+            "gratuit": True,
+            "url": "https://www.euronext.com/fr/products/commodities",
+        },
+    ],
+    "🇺🇸 États-Unis": [
+        {
+            "name": "Barchart — Cash Bids",
+            "desc": "Prix spot par élévateur sur tout le territoire US, par région",
+            "freq": "Temps réel",
+            "gratuit": True,
+            "url": "https://www.barchart.com/futures/quotes/ZS*0/cash-grain-bids",
+        },
+        {
+            "name": "DTN Progressive Farmer",
+            "desc": "Prix spot granulaires par élévateur et région US",
+            "freq": "Temps réel (premium)",
+            "gratuit": False,
+            "url": "https://www.dtnpf.com/agriculture/web/ag/grains/cash-bids",
+        },
+        {
+            "name": "USDA AMS",
+            "desc": "Prix officiels par région, marchés physiques US",
+            "freq": "Quotidien",
+            "gratuit": True,
+            "url": "https://www.ams.usda.gov/market-news/grain-feed",
+        },
+    ],
+    "🇧🇷 Brésil": [
+        {
+            "name": "CEPEA / ESALQ",
+            "desc": "Référence absolue — prix spot soja Paranaguá + intérieur",
+            "freq": "Quotidien",
+            "gratuit": True,
+            "url": "https://www.cepea.esalq.usp.br/br/indicador/soja.aspx",
+        },
+        {
+            "name": "Notícias Agrícolas",
+            "desc": "Agrégateur de prix spot brésiliens, plusieurs places",
+            "freq": "Quotidien",
+            "gratuit": True,
+            "url": "https://www.noticiasagricolas.com.br/cotacoes/soja",
+        },
+    ],
+}
+
+for region, sources in spot_sources.items():
+    st.markdown(f"**{region}**")
+    cols = st.columns(len(sources))
+    for col, src in zip(cols, sources):
+        badge = "🟢 Gratuit" if src["gratuit"] else "🔒 Premium"
+        with col:
+            st.markdown(f"""
+            <div class="metric-card" style="text-align:left; padding:16px 18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <span style="font-family:'Syne',sans-serif; font-weight:700; font-size:0.9rem; color:#e6edf3;">{src["name"]}</span>
+                    <span style="font-family:'Space Mono',monospace; font-size:0.62rem; color:{'#3fb950' if src['gratuit'] else '#f5c518'};">{badge}</span>
+                </div>
+                <div style="font-family:'Space Mono',monospace; font-size:0.7rem; color:#7d8590; margin-bottom:8px; line-height:1.5;">{src["desc"]}</div>
+                <div style="font-family:'Space Mono',monospace; font-size:0.65rem; color:#484f58; margin-bottom:10px;">⏱ {src["freq"]}</div>
+                <a href="{src["url"]}" target="_blank"
+                   style="font-family:'Space Mono',monospace; font-size:0.7rem; color:#f5c518; text-decoration:none;">
+                   → Accéder ↗
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
+    st.markdown("")
+
+
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
     time.sleep(60)
