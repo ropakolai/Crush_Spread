@@ -588,10 +588,10 @@ else:
 
 st.markdown("""
 <div class="info-box" style="margin-top:12px">
-    📈 Prix spot soja en temps réel :<br><br>
-    <a href="https://tradingeconomics.com/commodity/soybeans" target="_blank"
+    📈 Prix spot soja cash (ZSY00) en temps réel :<br><br>
+    <a href="https://www.barchart.com/futures/quotes/ZSY00" target="_blank"
        style="color:#f5c518; font-family:'Space Mono',monospace; font-size:0.78rem;">
-       → tradingeconomics.com/commodity/soybeans ↗
+       → barchart.com/futures/quotes/ZSY00 ↗
     </a>
 </div>
 """, unsafe_allow_html=True)
