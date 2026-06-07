@@ -450,34 +450,40 @@ st.markdown('<p class="section-title">Stock-to-Use ratio — USDA</p>', unsafe_a
 @st.cache_data(ttl=3600*6)
 def fetch_stu():
     """
-    USDA PSD Online API — soja mondial (commodity 2222000, country 00 = monde).
-    Retourne un DataFrame avec colonnes : year, production, total_use, ending_stocks, stu_pct
+    USDA FAS OpenData API — soja mondial (commodity 2222000, country all).
     """
     import requests
-    # Commodity 2222000 = Oilseed, Soybean / country 00 = World
-    url = "https://apps.fas.usda.gov/psdonline/api/psd/commodity/2222000/country/00"
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-
     rows = []
-    for item in data:
-        year        = item.get("marketYear")
-        attr        = item.get("attributeId")
-        value       = item.get("value")
-        if year is None or value is None:
+    for year in range(2010, datetime.now().year + 2):
+        url = f"https://apps.fas.usda.gov/OpenData/api/psd/commodity/2222000/country/all/year/{year}"
+        try:
+            r = requests.get(url, timeout=15, headers={"Accept": "application/json"})
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            for item in data:
+                rows.append({
+                    "year":        item.get("marketYear"),
+                    "attributeId": item.get("attributeId"),
+                    "value":       item.get("value"),
+                    "countryCode": item.get("countryCode"),
+                })
+        except Exception:
             continue
-        rows.append({"year": year, "attributeId": attr, "value": value})
 
-    df_raw = pd.DataFrame(rows)
-    if df_raw.empty:
+    if not rows:
         return pd.DataFrame()
 
-    # attributeId clés : 20 = Production, 176 = Total Consumption/Use, 45 = Ending Stocks
-    df_pivot = df_raw[df_raw["attributeId"].isin([20, 176, 45])].pivot_table(
-        index="year", columns="attributeId", values="value", aggfunc="last"
-    ).rename(columns={20: "production", 176: "total_use", 45: "ending_stocks"})
+    df_raw = pd.DataFrame(rows)
+    # Garder seulement les données mondiales (countryCode = "00" ou agréger)
+    # attributeId : 20=Production, 125=Total Dom. Consumption, 176=Total Use, 45=Ending Stocks
+    df_world = df_raw[df_raw["attributeId"].isin([20, 176, 45])].copy()
+    df_world = df_world.dropna(subset=["year", "value"])
+    df_world["year"] = df_world["year"].astype(int)
 
+    # Agréger par année + attribut (somme monde entier)
+    df_pivot = df_world.groupby(["year", "attributeId"])["value"].sum().unstack("attributeId")
+    df_pivot = df_pivot.rename(columns={20: "production", 176: "total_use", 45: "ending_stocks"})
     df_pivot = df_pivot.dropna()
     df_pivot["stu_pct"] = (df_pivot["ending_stocks"] / df_pivot["total_use"]) * 100
     df_pivot = df_pivot.sort_index()
@@ -612,27 +618,29 @@ st.markdown('<p class="section-title">Export Sales US — USDA</p>', unsafe_allo
 @st.cache_data(ttl=3600*6)
 def fetch_export_sales():
     """
-    USDA Export Sales Reporting API
-    commodity=2222000 (soybean), unit=1000 MT
+    USDA FAS OpenData API — Export Sales hebdomadaires soja US
+    commodity 2222000, unité 1000 MT
     """
     import requests
     from datetime import date, timedelta
     end   = date.today()
     start = end - timedelta(days=365)
     url = (
-        f"https://apps.fas.usda.gov/esrquery/esrapi/ann/report/2222000"
-        f"?fromDate={start}&toDate={end}"
+        f"https://apps.fas.usda.gov/OpenData/api/esr/exports"
+        f"?commodityCode=2222000"
+        f"&countryCode=0000"
+        f"&startDate={start}&endDate={end}"
     )
-    r = requests.get(url, timeout=15)
+    r = requests.get(url, timeout=15, headers={"Accept": "application/json"})
     r.raise_for_status()
     data = r.json()
 
     rows = []
     for item in data:
         rows.append({
-            "week":         item.get("weeklyExportSalesDate") or item.get("reportDate"),
-            "net_sales_mt": item.get("netSalesMT") or item.get("netSales"),
-            "exports_mt":   item.get("exportsMT") or item.get("exports"),
+            "week":         item.get("weeklyExportSalesDate") or item.get("reportDate") or item.get("weekEndingDate"),
+            "net_sales_mt": item.get("netSalesMT") or item.get("netSales1516") or item.get("currentMYNetSales"),
+            "exports_mt":   item.get("exportsMT") or item.get("exports1516") or item.get("currentMYExports"),
         })
     df = pd.DataFrame(rows).dropna(subset=["week"])
     df["week"] = pd.to_datetime(df["week"])
