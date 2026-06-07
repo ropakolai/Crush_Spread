@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import requests
 import time
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -441,6 +442,262 @@ try:
     st.dataframe(stats_df, use_container_width=True, hide_index=True)
 except Exception:
     pass
+
+# ── Stock-to-Use (USDA PSD API) ───────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Stock-to-Use ratio — USDA</p>', unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600*6)
+def fetch_stu():
+    """
+    USDA PSD Online API — soja mondial (commodity 2222000, country 00 = monde).
+    Retourne un DataFrame avec colonnes : year, production, total_use, ending_stocks, stu_pct
+    """
+    import requests
+    # Commodity 2222000 = Oilseed, Soybean / country 00 = World
+    url = "https://apps.fas.usda.gov/psdonline/api/psd/commodity/2222000/country/00"
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+
+    rows = []
+    for item in data:
+        year        = item.get("marketYear")
+        attr        = item.get("attributeId")
+        value       = item.get("value")
+        if year is None or value is None:
+            continue
+        rows.append({"year": year, "attributeId": attr, "value": value})
+
+    df_raw = pd.DataFrame(rows)
+    if df_raw.empty:
+        return pd.DataFrame()
+
+    # attributeId clés : 20 = Production, 176 = Total Consumption/Use, 45 = Ending Stocks
+    df_pivot = df_raw[df_raw["attributeId"].isin([20, 176, 45])].pivot_table(
+        index="year", columns="attributeId", values="value", aggfunc="last"
+    ).rename(columns={20: "production", 176: "total_use", 45: "ending_stocks"})
+
+    df_pivot = df_pivot.dropna()
+    df_pivot["stu_pct"] = (df_pivot["ending_stocks"] / df_pivot["total_use"]) * 100
+    df_pivot = df_pivot.sort_index()
+    return df_pivot
+
+try:
+    df_stu = fetch_stu()
+    if df_stu.empty:
+        st.warning("Données USDA indisponibles.")
+    else:
+        col_stu1, col_stu2 = st.columns([2, 1])
+
+        with col_stu1:
+            fig_stu = go.Figure()
+            # Barres STU
+            colors_stu = ["#f85149" if v < 10 else "#f5c518" if v < 15 else "#3fb950"
+                          for v in df_stu["stu_pct"]]
+            fig_stu.add_trace(go.Bar(
+                x=df_stu.index, y=df_stu["stu_pct"],
+                name="Stock-to-Use (%)",
+                marker_color=colors_stu,
+                opacity=0.85,
+            ))
+            # Ligne seuil tendu
+            fig_stu.add_hline(y=10, line_dash="dash", line_color="#f85149",
+                              annotation_text="Seuil tendu 10%", annotation_font_color="#f85149")
+            fig_stu.add_hline(y=15, line_dash="dot", line_color="#f5c518",
+                              annotation_text="Seuil modéré 15%", annotation_font_color="#f5c518")
+            fig_stu.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+                xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d", title="STU (%)"),
+                margin=dict(l=10, r=10, t=20, b=10), height=320,
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_stu, use_container_width=True)
+
+        with col_stu2:
+            last = df_stu.iloc[-1]
+            stu_val  = last["stu_pct"]
+            stu_color = "#f85149" if stu_val < 10 else "#f5c518" if stu_val < 15 else "#3fb950"
+            stu_label = "🔴 TENDU" if stu_val < 10 else "🟡 MODÉRÉ" if stu_val < 15 else "🟢 CONFORTABLE"
+            st.markdown(f"""
+            <div class="metric-card" style="margin-top:10px">
+                <div class="metric-label">STU Mondial {int(df_stu.index[-1])}/{int(df_stu.index[-1])+1}</div>
+                <div class="metric-value" style="color:{stu_color}">{stu_val:.1f}%</div>
+                <div class="metric-unit">{stu_label}</div>
+                <br>
+                <div class="metric-unit">Production : {last['production']:.0f} Mt</div>
+                <div class="metric-unit">Consommation : {last['total_use']:.0f} Mt</div>
+                <div class="metric-unit">Stocks fin : {last['ending_stocks']:.0f} Mt</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+except Exception as e:
+    st.warning(f"Impossible de charger les données USDA : {e}")
+
+
+# ── BRL/USD + corrélation ZS ──────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Compétitivité Brésil — BRL/USD vs ZS</p>', unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600)
+def fetch_brl(period="1y"):
+    brl = yf.Ticker("BRL=X").history(period=period, auto_adjust=True)["Close"].dropna()
+    # BRL=X = USD par BRL, on veut BRL par USD
+    return (1 / brl).rename("USDBRL")
+
+try:
+    df_brl = fetch_brl(period)
+    # Récupérer ZS sur la même période depuis hist déjà chargé
+    df_zs_hist = hist[["ZS"]].copy().dropna()
+    df_zs_hist["ZS_d"] = df_zs_hist["ZS"] * 0.01
+
+    # Aligner les deux séries sur les dates communes
+    df_fx = pd.DataFrame(df_brl)
+    df_fx.index = df_fx.index.tz_localize(None)
+    df_zs_hist.index = df_zs_hist.index.tz_localize(None) if df_zs_hist.index.tz else df_zs_hist.index
+    df_merged = df_fx.join(df_zs_hist["ZS_d"], how="inner")
+
+    fig_brl = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_brl.add_trace(go.Scatter(
+        x=df_merged.index, y=df_merged["USDBRL"],
+        name="USD/BRL", line=dict(color="#f5c518", width=1.8)
+    ), secondary_y=False)
+    fig_brl.add_trace(go.Scatter(
+        x=df_merged.index, y=df_merged["ZS_d"],
+        name="ZS ($/bss)", line=dict(color="#58a6ff", width=1.8)
+    ), secondary_y=True)
+
+    fig_brl.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+        xaxis=dict(gridcolor="#21262d"),
+        margin=dict(l=10, r=10, t=20, b=10), height=320,
+        hovermode="x unified",
+        legend=dict(bgcolor="rgba(0,0,0,0)", x=0.01, y=0.99),
+    )
+    fig_brl.update_yaxes(title_text="USD/BRL", gridcolor="#21262d", secondary_y=False)
+    fig_brl.update_yaxes(title_text="ZS $/bss", gridcolor="#21262d", secondary_y=True)
+    st.plotly_chart(fig_brl, use_container_width=True)
+
+    # Corrélation glissante 60j
+    if len(df_merged) >= 60:
+        df_merged["corr_60"] = df_merged["USDBRL"].rolling(60).corr(df_merged["ZS_d"])
+        fig_corr = go.Figure()
+        fig_corr.add_trace(go.Scatter(
+            x=df_merged.index, y=df_merged["corr_60"],
+            mode="lines", name="Corrélation 60j",
+            line=dict(color="#3fb950", width=1.5),
+            fill="tozeroy", fillcolor="rgba(63,185,80,0.07)"
+        ))
+        fig_corr.add_hline(y=0, line_color="#484f58", line_width=1)
+        fig_corr.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+            xaxis=dict(gridcolor="#21262d"),
+            yaxis=dict(gridcolor="#21262d", title="Corrélation", range=[-1, 1]),
+            margin=dict(l=10, r=10, t=10, b=10), height=200,
+        )
+        st.caption("📊 Corrélation glissante 60j entre USD/BRL et ZS — proche de +1 = le BRL suit le soja")
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+except Exception as e:
+    st.warning(f"Impossible de charger BRL/USD : {e}")
+
+
+# ── Export Sales US (USDA) ────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Export Sales US — USDA</p>', unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600*6)
+def fetch_export_sales():
+    """
+    USDA Export Sales Reporting API
+    commodity=2222000 (soybean), unit=1000 MT
+    """
+    import requests
+    from datetime import date, timedelta
+    end   = date.today()
+    start = end - timedelta(days=365)
+    url = (
+        f"https://apps.fas.usda.gov/esrquery/esrapi/ann/report/2222000"
+        f"?fromDate={start}&toDate={end}"
+    )
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+
+    rows = []
+    for item in data:
+        rows.append({
+            "week":         item.get("weeklyExportSalesDate") or item.get("reportDate"),
+            "net_sales_mt": item.get("netSalesMT") or item.get("netSales"),
+            "exports_mt":   item.get("exportsMT") or item.get("exports"),
+        })
+    df = pd.DataFrame(rows).dropna(subset=["week"])
+    df["week"] = pd.to_datetime(df["week"])
+    df = df.sort_values("week").tail(52)
+    return df
+
+try:
+    df_exp = fetch_export_sales()
+    if df_exp.empty:
+        st.info("Données d'export sales non disponibles.")
+    else:
+        fig_exp = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.08,
+                                subplot_titles=["Ventes nettes (1000 MT)", "Exports réels (1000 MT)"])
+        fig_exp.add_trace(go.Bar(
+            x=df_exp["week"], y=df_exp["net_sales_mt"],
+            name="Ventes nettes", marker_color="#58a6ff", opacity=0.8
+        ), row=1, col=1)
+        fig_exp.add_trace(go.Bar(
+            x=df_exp["week"], y=df_exp["exports_mt"],
+            name="Exports réels", marker_color="#3fb950", opacity=0.8
+        ), row=2, col=1)
+        fig_exp.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Space Mono, monospace", color="#7d8590", size=11),
+            showlegend=False,
+            margin=dict(l=10, r=10, t=30, b=10), height=400,
+        )
+        for axis in ["xaxis", "xaxis2", "yaxis", "yaxis2"]:
+            fig_exp.update_layout(**{axis: dict(gridcolor="#21262d")})
+        st.plotly_chart(fig_exp, use_container_width=True)
+        st.caption("Source : USDA Export Sales Reporting — données hebdomadaires")
+
+except Exception as e:
+    st.info(f"Export sales USDA : {e}")
+
+
+# ── Basis manuel ──────────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown('<p class="section-title">Basis (saisie manuelle)</p>', unsafe_allow_html=True)
+
+spot_price = st.sidebar.number_input(
+    "Prix spot local ($/bss)",
+    min_value=0.0, max_value=50.0,
+    value=0.0, step=0.01,
+    format="%.4f",
+    help="Entrez votre prix spot physique local en $/boisseau"
+)
+
+if spot_price > 0 and zs is not None:
+    basis = spot_price - (zs / 100)
+    basis_color = "#3fb950" if basis >= 0 else "#f85149"
+    basis_label = "prime" if basis >= 0 else "décote"
+    b_col1, b_col2, b_col3 = st.columns([1, 2, 1])
+    with b_col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Basis — {basis_label} sur le CBOT</div>
+            <div class="metric-value" style="color:{basis_color}">${basis:+.4f}/bss</div>
+            <div class="metric-unit">Spot {spot_price:.4f} − Futures {zs/100:.4f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.info("💡 Entrez votre prix spot local dans la sidebar pour calculer le basis.")
+
 
 # ── Auto refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
