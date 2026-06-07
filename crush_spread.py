@@ -217,22 +217,31 @@ CONTRACTS = {
 
 @st.cache_data(ttl=60)
 def fetch_prices(period: str = "6mo"):
-    """Fetch current prices and historical data."""
+    """Fetch current prices and historical data, ticker by ticker for robustness."""
     tickers = list(CONTRACTS.keys())
-    data = yf.download(tickers, period=period, auto_adjust=True, progress=False)
-    
     current = {}
-    prev = {}
+    prev    = {}
+    hist_frames = {}
+
     for t in tickers:
         try:
-            closes = data["Close"][t].dropna()
+            df = yf.Ticker(t).history(period=period, auto_adjust=True)
+            closes = df["Close"].dropna()
+            if len(closes) == 0:
+                raise ValueError("empty")
             current[t] = float(closes.iloc[-1])
             prev[t]    = float(closes.iloc[-2]) if len(closes) > 1 else float(closes.iloc[-1])
+            hist_frames[t] = closes
         except Exception:
             current[t] = None
             prev[t]    = None
+            hist_frames[t] = pd.Series(dtype=float)
 
-    return current, prev, data["Close"]
+    # Combine into a single DataFrame aligned on dates
+    hist = pd.DataFrame(hist_frames)
+    hist.columns = [c.replace("=F", "") for c in hist.columns]
+
+    return current, prev, hist
 
 
 def crush_spread(zs, zl, zm):
@@ -350,7 +359,6 @@ st.markdown('<p class="section-title">Historique</p>', unsafe_allow_html=True)
 
 try:
     df = hist.copy()
-    df.columns = [c.replace("=F", "") for c in df.columns]
     df = df.dropna()
 
     # Conversion en dollars (ZS et ZL sont en ¢)
